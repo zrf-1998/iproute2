@@ -100,8 +100,8 @@ enum col_id {
 	COL_SERV,
 	COL_RADDR,
 	COL_RSERV,
-	COL_EXT,
 	COL_PROC,
+	COL_EXT,
 	COL_MAX
 };
 
@@ -210,6 +210,8 @@ enum {
 	SS_LAST_ACK,
 	SS_LISTEN,
 	SS_CLOSING,
+	SS_NEW_SYN_RECV, /* Kernel only value, not for use in user space */
+	SS_BOUND_INACTIVE,
 	SS_MAX
 };
 
@@ -875,6 +877,7 @@ struct tcpstat {
 	unsigned long long  bytes_sent;
 	unsigned long long  bytes_retrans;
 	bool		    has_ts_opt;
+	bool		    has_usec_ts_opt;
 	bool		    has_sack_opt;
 	bool		    has_ecn_opt;
 	bool		    has_ecnseen_opt;
@@ -1381,6 +1384,8 @@ static void sock_state_print(struct sockstat *s)
 		[SS_LAST_ACK] = "LAST-ACK",
 		[SS_LISTEN] =	"LISTEN",
 		[SS_CLOSING] = "CLOSING",
+		[SS_NEW_SYN_RECV] = "UNDEF", /* Never returned by kernel */
+		[SS_BOUND_INACTIVE] = "UNDEF", /* Never returned by kernel */
 	};
 
 	switch (s->local.family) {
@@ -2422,6 +2427,8 @@ static void proc_ctx_print(struct sockstat *s)
 			free(buf);
 		}
 	}
+
+	field_next();
 }
 
 static void inet_stats_print(struct sockstat *s, bool v6only)
@@ -2562,6 +2569,8 @@ static void tcp_stats_print(struct tcpstat *s)
 
 	if (s->has_ts_opt)
 		out(" ts");
+	if (s->has_usec_ts_opt)
+		out(" usec_ts");
 	if (s->has_sack_opt)
 		out(" sack");
 	if (s->has_ecn_opt)
@@ -3037,6 +3046,7 @@ static void tcp_show_info(const struct nlmsghdr *nlh, struct inet_diag_msg *r,
 
 		if (show_options) {
 			s.has_ts_opt	   = TCPI_HAS_OPT(info, TCPI_OPT_TIMESTAMPS);
+			s.has_usec_ts_opt  = TCPI_HAS_OPT(info, TCPI_OPT_USEC_TS);
 			s.has_sack_opt	   = TCPI_HAS_OPT(info, TCPI_OPT_SACK);
 			s.has_ecn_opt	   = TCPI_HAS_OPT(info, TCPI_OPT_ECN);
 			s.has_ecnseen_opt  = TCPI_HAS_OPT(info, TCPI_OPT_ECN_SEEN);
@@ -3248,6 +3258,8 @@ static void mptcp_stats_print(struct mptcp_info *s)
 		out(" bytes_received:%llu", s->mptcpi_bytes_received);
 	if (s->mptcpi_bytes_acked)
 		out(" bytes_acked:%llu", s->mptcpi_bytes_acked);
+	if (s->mptcpi_subflows_total)
+		out(" subflows_total:%u", s->mptcpi_subflows_total);
 }
 
 static void mptcp_show_info(const struct nlmsghdr *nlh, struct inet_diag_msg *r,
@@ -5333,6 +5345,7 @@ static void _usage(FILE *dest)
 "   -r, --resolve       resolve host names\n"
 "   -a, --all           display all sockets\n"
 "   -l, --listening     display listening sockets\n"
+"   -B, --bound-inactive display TCP bound but inactive sockets\n"
 "   -o, --options       show timer information\n"
 "   -e, --extended      show detailed socket information\n"
 "   -m, --memory        show socket memory usage\n"
@@ -5415,8 +5428,16 @@ static int scan_state(const char *state)
 		[SS_LAST_ACK] = "last-ack",
 		[SS_LISTEN] =	"listening",
 		[SS_CLOSING] = "closing",
+		[SS_NEW_SYN_RECV] = "new-syn-recv",
+		[SS_BOUND_INACTIVE] = "bound-inactive",
 	};
 	int i;
+
+	/* NEW_SYN_RECV is a kernel implementation detail. It shouldn't be used
+	 * or even be visible by users.
+	 */
+	if (strcasecmp(state, "new-syn-recv") == 0)
+		goto wrong_state;
 
 	if (strcasecmp(state, "close") == 0 ||
 	    strcasecmp(state, "closed") == 0)
@@ -5440,6 +5461,7 @@ static int scan_state(const char *state)
 			return (1<<i);
 	}
 
+wrong_state:
 	fprintf(stderr, "ss: wrong state name: %s\n", state);
 	exit(-1);
 }
@@ -5481,6 +5503,7 @@ static const struct option long_opts[] = {
 	{ "vsock", 0, 0, OPT_VSOCK },
 	{ "all", 0, 0, 'a' },
 	{ "listening", 0, 0, 'l' },
+	{ "bound-inactive", 0, 0, 'B' },
 	{ "ipv4", 0, 0, '4' },
 	{ "ipv6", 0, 0, '6' },
 	{ "packet", 0, 0, '0' },
@@ -5519,7 +5542,7 @@ int main(int argc, char *argv[])
 	int state_filter = 0;
 
 	while ((ch = getopt_long(argc, argv,
-				 "dhaletuwxnro460spTbEf:mMiA:D:F:vVzZN:KHSO",
+				 "dhalBetuwxnro460spTbEf:mMiA:D:F:vVzZN:KHSO",
 				 long_opts, NULL)) != EOF) {
 		switch (ch) {
 		case 'n':
@@ -5583,6 +5606,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'l':
 			state_filter = (1 << SS_LISTEN) | (1 << SS_CLOSE);
+			break;
+		case 'B':
+			state_filter = 1 << SS_BOUND_INACTIVE;
 			break;
 		case '4':
 			filter_af_set(&current_filter, AF_INET);
@@ -5794,6 +5820,9 @@ int main(int argc, char *argv[])
 
 	if (ssfilter_parse(&current_filter.f, argc, argv, filter_fp))
 		usage();
+
+	if (!show_processes)
+		columns[COL_PROC].disabled = 1;
 
 	if (!(current_filter.dbs & (current_filter.dbs - 1)))
 		columns[COL_NETID].disabled = 1;

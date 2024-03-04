@@ -247,6 +247,7 @@ ip-link \- network device configuration
 .BR macvlan  " | "
 .BR macvtap  " | "
 .BR netdevsim " |"
+.BR netkit " |"
 .BR nlmon " |"
 .BR rmnet " |"
 .BR sit " |"
@@ -384,6 +385,9 @@ Link types:
 .BR netdevsim
 - Interface for netdev API tests
 .sp
+.BR netkit
+- BPF-programmable network device
+.sp
 .BR nlmon
 - Netlink monitoring device
 .sp
@@ -441,6 +445,11 @@ TCP for IPv6 on this device when the size is greater than 65536.
 specifies the recommended maximum size of a IPv4 Generic Segment Offload
 packet the new device should accept. This is especially used to enable
 BIG TCP for IPv4 on this device by setting to a size greater than 65536.
+Note that
+.B gso_max_size
+needs to be set to a size greater than or equal to
+.B gso_ipv4_max_size
+to really enable BIG TCP for IPv4.
 
 .TP
 .BI gso_max_segs " SEGMENTS "
@@ -845,6 +854,46 @@ the following additional arguments are supported:
 - specifies the virtual pair device name of the
 .I VETH/VXCAN
 tunnel.
+
+.in -8
+
+.TP
+netkit Type Support
+For a link of type
+.I netkit
+the following additional arguments are supported:
+
+.BI "ip link add " DEVICE
+.BR type " netkit "
+[
+.BI mode " MODE "
+] [
+.I "POLICY "
+] [
+.BR peer
+[
+.I "POLICY "
+] [
+.I "NAME "
+] ]
+
+.in +8
+
+.sp
+.BI mode " MODE"
+- specifies the operation mode of the netkit device with "l3" and "l2"
+as possible values. Default option is "l3".
+
+.sp
+.I "POLICY"
+- specifies the default device policy when no BPF programs are attached
+with "forward" and "blackhole" as possible values. Default option is
+"forward". Specifying policy before the peer option refers to the primary
+device, after the peer option refers to the peer device.
+
+.sp
+.I "NAME"
+- specifies the device name of the peer device.
 
 .in -8
 
@@ -2261,8 +2310,8 @@ give the device a symbolic name for easy reference.
 .BI group " GROUP"
 specify the group the device belongs to.
 The available groups are listed in
-.BR "@SYSCONF_USR_DIR@/group" or
-.BR "@SYSCONF_ETC_DIR@/group" (has precedence if exists).
+.BR @SYSCONF_USR_DIR@/group " or " @SYSCONF_ETC_DIR@/group
+(has precedence if exists).
 
 .TP
 .BI vf " NUM"
@@ -2799,7 +2848,7 @@ are supported:
 locally terminated traffic for the given DSA switch user port. For a
 description of which network interfaces are suitable for serving as conduit
 interfaces of this user port, please see
-https://www.kernel.org/doc/html/latest/networking/dsa/configuration.html#affinity-of-user-ports-to-cpu-ports
+https://docs.kernel.org/networking/dsa/configuration.html#affinity-of-user-ports-to-cpu-ports
 as well as what is supported by the driver in use.
 
 .sp
@@ -2872,8 +2921,7 @@ specifies which help of link type to display.
 .SS
 .I GROUP
 may be a number or a string from
-.B @SYSCONF_USR_DIR@/group or
-.B @SYSCONF_ETC_DIR@/group
+.BR @SYSCONF_USR_DIR@/group " or " @SYSCONF_ETC_DIR@/group
 which can be manually filled and has precedence if exists.
 
 .SH "EXAMPLES"
